@@ -24,15 +24,22 @@ var books []Book = []Book{
 
 func createBook(w http.ResponseWriter, r *http.Request) {
 	var newBook Book
-    _ = json.NewDecoder(r.Body).Decode(&newBook)
+    err := json.NewDecoder(r.Body).Decode(&newBook)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+	
     newBook.ID = string(len(books) + 1)
     books = append(books, newBook)
     json.NewEncoder(w).Encode(newBook)
+	respondWithJson(w, http.StatusCreated, newBook)
 }
 
 func getBooks (w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(books)
+	respondWithJson(w, http.StatusOK, books)
 }
 
 func getBook(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +52,7 @@ func getBook(w http.ResponseWriter, r *http.Request) {
         }
     }
     json.NewEncoder(w).Encode(&Book{})
-	http.Error(w, "Book not found", http.StatusNotFound)
+	respondWithError(w, http.StatusNotFound, "Book not found")
 }
 
 func updateBook(w http.ResponseWriter, r *http.Request) {
@@ -59,11 +66,12 @@ func updateBook(w http.ResponseWriter, r *http.Request) {
 			updatedBook.ID = params["id"]
 			books = append(books, updatedBook)
 			json.NewEncoder(w).Encode(updatedBook)
+			respondWithJson(w, http.StatusOK, updatedBook)
 			return
 		}
 	}
 	json.NewEncoder(w).Encode(books)
-	http.Error(w, "Book not found", http.StatusNotFound)
+	respondWithJson(w, http.StatusNotFound, "Book not found")
 }
 
 func deleteBook(w http.ResponseWriter, r *http.Request) {
@@ -76,9 +84,19 @@ func deleteBook(w http.ResponseWriter, r *http.Request) {
         }
     }
     json.NewEncoder(w).Encode(books)
-	http.Error(w, "Book deleted", http.StatusNoContent)
+	respondWithError(w, http.StatusNotFound, "Bad not found")
 }
 
+func respondWithJson(w http.ResponseWriter, code int, payload interface{}) {
+	response, _ := json.Marshal(payload)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	w.Write(response)
+}
+
+func respondWithError(w http.ResponseWriter, code int, message string) {
+	respondWithJson(w, code, map[string]string{"error": message})
+}
 
 func main(){
 	// Initialize a new router
