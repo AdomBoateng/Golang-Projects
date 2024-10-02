@@ -4,8 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
+
+	"github.com/golang-jwt/jwt"
 	"github.com/gorilla/mux"
 )
+
+// Add JWT Secret key
+var jwtKey = []byte("my_secret_key")
 
 // Book Structure
 type Book struct {
@@ -13,6 +19,12 @@ type Book struct {
 	Title string `json:"title"`
 	Author string `json:"author"`
 	Year string `json:"year"`
+}
+
+// JWT claims struct
+type Claims struct {
+	Username string `json:"username"`
+	jwt.StandardClaims
 }
 
 
@@ -98,16 +110,76 @@ func respondWithError(w http.ResponseWriter, code int, message string) {
 	respondWithJson(w, code, map[string]string{"error": message})
 }
 
+func login(w http.ResponseWriter, r *http.Request) {
+	var credentials struct {
+		Username string `json:"username"`
+        Password string `json:"password"`
+	}
+
+	// Decode 
+	err := json.NewDecoder(r.Body).Decode(&credentials)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+
+	if credentials.Username != "admin" || credentials.Password != "password" {
+		respondWithError(w, http.StatusUnauthorized, "Invalid credentials")
+        return
+	}
+
+	expirationTime := time.Now().Add(5 * time.Minute)
+	claims := &Claims{
+		Username: credentials.Username,
+		StandardClaims: jwt.StandardClaims{
+            ExpiresAt: expirationTime.Unix(),
+        },
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString(jwtKey)
+	if err!= nil {
+        respondWithError(w, http.StatusInternalServerError, "Error creating token")
+        return
+    }
+
+	respondWithJson(w, http.StatusOK, map[string]string{"token": tokenString})
+}
+
+func jwtMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func (w http.ResponseWriter, r *http.Request){
+		tokenString := r.Header.Get("Authorization")
+
+        if tokenString == "" {
+            respondWithError(w, http.StatusUnauthorized, "Missing Authorization header")
+            return
+        }
+
+        claims := &Claims{}
+        token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+            return jwtKey, nil
+        })
+
+        if err!= nil ||!token.Valid {
+            respondWithError(w, http.StatusUnauthorized, "Invalid token")
+            return
+        }
+
+        next.ServeHTTP(w, r)
+	})
+}
+
 func main(){
 	// Initialize a new router
 	r :=mux.NewRouter()
 
 	// Define the routes
+	r.HandleFunc("/login", login).Methods("POST")
 	r.HandleFunc("/books", getBooks).Methods("GET")
 	r.HandleFunc("/books/{id}", getBook).Methods("GET")
-	r.HandleFunc("/books", createBook).Methods("POST")
-	r.HandleFunc("/books/{id}", updateBook).Methods("PUT")
-	r.HandleFunc("/books/{id}", deleteBook).Methods("DELETE")
+	r.Handle("/books", jwtMiddleware(http.HandlerFunc(createBook))).Methods("POST")
+	r.Handle("/books/{id}", jwtMiddleware(http.HandlerFunc(updateBook))).Methods("PUT")
+	r.Handle("/books/{id}", jwtMiddleware(http.HandlerFunc(deleteBook))).Methods("DELETE")
 
 	// Start the server
 	fmt.Println("Server running on port 8080")
